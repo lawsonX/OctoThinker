@@ -1,0 +1,50 @@
+{
+    "pipeline": [
+        {
+            "limit": -1,
+            "skip": 0,
+            "text_key": "text",
+            "id_key": "id",
+            "adapter": "<bound method BaseReader._default_adapter of \ud83d\udcd6 - READER: \ud83d\udc3f Jsonl>",
+            "_empty_warning": false,
+            "default_metadata": null,
+            "data_folder": "DataFolder(path='/hdd2/xiaolirui/OctoThinker/midtraining/data/jsonl/SmokeTiny', fs=<fsspec.implementations.local.LocalFileSystem object at 0x7fa03b973a00>)",
+            "paths_file": null,
+            "recursive": true,
+            "glob_pattern": "*.jsonl",
+            "shuffle_files": false,
+            "file_progress": false,
+            "doc_progress": false,
+            "compression": "infer"
+        },
+        {
+            "tokenizer_name_or_path": "/hdd2/xiaolirui/OctoThinker/models/Llama-3.2-3B-Base",
+            "eos_token": "",
+            "_tokenizer": null,
+            "_post_processor": null,
+            "_token_size": null,
+            "_token_format": null,
+            "output_folder": "DataFolder(path='/tmp/smoke_tok', fs=<fsspec.implementations.local.LocalFileSystem object at 0x7fa03b973a00>)",
+            "local_working_dir": null,
+            "save_filename": null,
+            "save_loss_metadata": false,
+            "shuffle": false,
+            "batch_size": 10000,
+            "rand": "Generator(PCG64)",
+            "save_final_metadata": true,
+            "upload_block_size": null,
+            "max_tokens_per_file": 1000000000.0
+        }
+    ],
+    "logging_dir": "DataFolder(path='/hdd2/xiaolirui/OctoThinker/logs/2026-10-10_19-29-40_cglan', fs=<fsspec.implementations.local.LocalFileSystem object at 0x7fa03b973a00>)",
+    "skip_completed": true,
+    "randomize_start_duration": 0,
+    "tasks": 1,
+    "workers": 1,
+    "start_method": "forkserver",
+    "local_tasks": 1,
+    "local_rank_offset": 0,
+    "depends": null,
+    "_launched": true,
+    "world_size": 1
+}

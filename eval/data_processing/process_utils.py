@@ -44,7 +44,9 @@ def process_math500(item):
         return
     sample = {
         "dataset": "math500-cot",
-        "id": item['id'],
+        # math500/test.jsonl keys rows by 'unique_id'; keep 'id' as fallback
+        # for copies of the dataset that use the conventional name.
+        "id": item.get('id', item.get('unique_id')),
         "level": item["level"],
         "subject": item["subject"],
         "messages": [

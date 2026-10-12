@@ -116,10 +116,10 @@ def compute_row_means(df, exclude_columns=None):
     return df_numeric.mean(axis=1)
 
 
-def plot_results(file_path):
+def plot_results(file_path, summarize_dir):
 
     df = read_csv_file(file_path)
-    
+
     total_tokens = df['model'].iloc[-1]
 
     x_axis = [float(ckpt_name.split("B")[0]) for ckpt_name in df['model'].tolist()]
@@ -142,6 +142,8 @@ def plot_results(file_path):
     # exit()
     plot_rows = len(all_columns) // 5 if len(all_columns) % 5 == 0 else len(all_columns) // 5 + 1
 
+    import matplotlib
+    matplotlib.use('Agg')  # headless server: never try to open a GUI window
     import matplotlib.pyplot as plt
     # for each benchmark, plot 10 sub-figures to be 2x5, and make it high resolution
     plt.figure(figsize=(25, 5 * plot_rows))
@@ -163,8 +165,10 @@ def plot_results(file_path):
     # big title
     plt.suptitle(f'Performance ({total_tokens}B)', fontweight='bold', fontsize=30)
     plt.tight_layout(pad=0.5)
-    plt.show()
-    plt.savefig(file_path.replace('.csv', '_plot.pdf'))
+    # Save next to the summary CSV instead of showing interactively.
+    out_png = os.path.join(summarize_dir, 'results.png')
+    plt.savefig(out_png)
+    print(f"plot saved to {out_png}")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -177,9 +181,14 @@ def main():
 
     model2dataset2task2metric = {}
     for model in os.listdir(args.dirname):
-        model2dataset2task2metric[model] = {}
         subdir = os.path.join(args.dirname, model)
+        if not os.path.isdir(subdir):
+            continue  # e.g. stray files under outputs/
+        model2dataset2task2metric[model] = {}
         for dataset in os.listdir(subdir):
+            dataset_dir = os.path.join(subdir, dataset)
+            if not os.path.isdir(dataset_dir):
+                continue  # e.g. summary artifacts (evaluation_results.csv)
             log_dir = os.path.join(subdir, dataset, "infer_logs")
             agg_dirname = os.path.join(subdir, dataset, "results")
             if not os.path.exists(log_dir):
@@ -235,8 +244,15 @@ def main():
             ensure_ascii=False
         )
     # aggregate results into one csv, column: dataset, row: model, value: accuracy
-    # need to sort to avoid some cases brought by str not the number. 
-    model2dataset2task2metric = dict(sorted(model2dataset2task2metric.items(), key=lambda item: float(item[0].split("B")[0])))
+    # need to sort to avoid some cases brought by str not the number.
+    # Model dir names are not guaranteed to look like "3.2B..." (e.g. HF-style
+    # "Llama-3.2-3B-Base"); sort numerically when possible, else alphabetically.
+    def _model_sort_key(name):
+        try:
+            return (0, float(name.split("B")[0]), name)
+        except (ValueError, IndexError):
+            return (1, 0.0, name)
+    model2dataset2task2metric = dict(sorted(model2dataset2task2metric.items(), key=lambda item: _model_sort_key(item[0])))
 
     csv_path = os.path.join(args.summarize_dir, "evaluation_results.csv")
     with open(csv_path, "w") as f:
@@ -258,7 +274,12 @@ def main():
             f.write(",".join(row) + "\n")
     
     if os.path.exists(csv_path):
-        plot_results(csv_path)
+        try:
+            plot_results(csv_path, args.summarize_dir)
+        except Exception as e:
+            # plotting is best-effort; the JSON/CSV summaries above are the
+            # authoritative outputs and are already written.
+            print(f"[warn] plot_results failed ({e}); summaries are unaffected", flush=True)
 
 if __name__ == '__main__':
     main()

@@ -44,15 +44,26 @@ def infer(args, test_data):
     if tokenizer is None:
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name_or_path, trust_remote_code=True)
 
-    if args.prompt_format == 'few_shot':
+    # few_shot_prompt == 'none' is a special zero-shot mode (for RL-tuned models,
+    # evaluated with the same prompt template used in RL training): no few-shot
+    # class is instantiated and the optional --system_prompt is wrapped around
+    # the question (any "[PROMPT]" placeholder in it is replaced by the question).
+    zero_shot = args.few_shot_prompt == 'none'
+    if args.prompt_format == 'few_shot' and not zero_shot:
         assert args.few_shot_prompt is not None
         prompting = eval(args.few_shot_prompt)()
 
     prompts = []
     for example in test_data:
         prompt = ""
-        if args.prompt_format == 'few_shot':
+        if args.prompt_format == 'few_shot' and not zero_shot:
             prompt = prompting.format_prompt(example['messages'][-2]['content'], example['messages'][-1]['content'])
+        elif zero_shot:
+            question = example['messages'][-2]['content']
+            if args.system_prompt:
+                prompt = args.system_prompt.replace('[PROMPT]', question)
+            else:
+                prompt = question
         else:
             for mess in example['messages']:
                 if args.prompt_format == 'sft':
@@ -80,7 +91,7 @@ def infer(args, test_data):
             model = LLM(model=args.model_name_or_path, tokenizer=args.tokenizer_name_or_path, trust_remote_code=True, tensor_parallel_size=len(os.environ['CUDA_VISIBLE_DEVICES'].split(",")))
         eos_token = tokenizer.eos_token if tokenizer is not None and tokenizer.eos_token is not None else '</s>'
         stop_words = [eos_token]
-        if args.prompt_format == 'few_shot':
+        if args.prompt_format == 'few_shot' and not zero_shot:
             stop_words.extend(prompting.stop_words())
         outputs = model.generate(prompts, SamplingParams(temperature=args.temperature, top_p=1.0, max_tokens=1024, n=1, stop=stop_words))
         outputs = sorted(outputs, key=lambda x: int(x.request_id)) # sort outputs by request_id
@@ -97,7 +108,7 @@ def infer(args, test_data):
         stop_id_sequences = []
         if tokenizer.eos_token_id is not None:
             stop_id_sequences = [[tokenizer.eos_token_id]]
-        if args.prompt_format == 'few_shot':
+        if args.prompt_format == 'few_shot' and not zero_shot:
             stop_id_sequences.extend([tokenizer.encode(word) for word in prompting.stop_words()])
         outputs, finish_completion = generate_completions(
             model=model,
@@ -172,15 +183,13 @@ def main(args):
 
     print(f"Timeout count >>> output eval = {eval_timeout_cnt}", flush=True)
 
-    pred_fname = "predictions.json"
-    if args.n_subsets > 1:
-        pred_fname = f"predictions.{args.subset_id}.json"
+    # Always write subset-id-suffixed files: run_subset_parallel.py globs
+    # "metrics.<pid>.json" / "predictions.<pid>.json" even for a single worker.
+    pred_fname = f"predictions.{args.subset_id}.json"
     with open(os.path.join(args.save_dir, pred_fname), "w", encoding = "utf-8") as fout:
         json.dump(results, fout, ensure_ascii=True)
 
-    metric_fname = "metrics.json"
-    if args.n_subsets > 1:
-        metric_fname = f"metrics.{args.subset_id}.json"
+    metric_fname = f"metrics.{args.subset_id}.json"
     with open(os.path.join(args.save_dir, metric_fname), "w", encoding = "utf-8") as fout:
         json.dump({
             "n_samples": len(results),
@@ -207,7 +216,12 @@ if __name__ == "__main__":
     parser.add_argument("--n_repeat_sampling", type=int, default=1)
     parser.add_argument("--complete_partial_output", action='store_true')
     parser.add_argument("--prompt_format", type=str, choices=['sft', 'few_shot'], default='sft')
-    parser.add_argument("--few_shot_prompt", type=str, default=None)
+    parser.add_argument("--few_shot_prompt", type=str, default=None,
+                        help="few-shot prompt class name; the special value 'none' means zero-shot "
+                             "(used with --system_prompt to reproduce the RL training template)")
+    parser.add_argument("--system_prompt", type=str, default=None,
+                        help="optional system/wrapper prompt for zero-shot eval; '[PROMPT]' is "
+                             "replaced by the question. Ignored for ordinary few-shot prompts.")
     parser.add_argument("--answer_extraction_fn", type=str, required=True)
     parser.add_argument("--eval_fn", type=str, required=True)
     parser.add_argument("--gpus", type=str, default=None)

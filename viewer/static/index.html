@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Parquet Viewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#0f1115; --bg2:#161a22; --bg3:#1d2330; --line:#2a3242;
+  --fg:#d7dce4; --dim:#8a93a5; --acc:#4f9cf9; --acc2:#7c5cff;
+  --ok:#3fb96f; --warn:#e2a336; --bad:#e05c5c;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font:13px/1.5 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--fg);overflow:hidden}
+#app{display:grid;grid-template-rows:44px 1fr;height:100vh}
+header{display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--bg2);
+  border-bottom:1px solid var(--line)}
+header .logo{font-weight:700;font-size:14px}
+header .logo span{color:var(--acc)}
+header .root{color:var(--dim);font-family:ui-monospace,Menlo,monospace;font-size:12px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#status{margin-left:auto;font-size:12px;color:var(--dim)}
+#main{display:grid;grid-template-columns:290px 1fr;min-height:0}
+#side{border-right:1px solid var(--line);background:var(--bg2);display:flex;flex-direction:column;min-height:0}
+#side .tools{padding:8px;border-bottom:1px solid var(--line)}
+#side input[type=search]{width:100%;background:var(--bg3);border:1px solid var(--line);
+  border-radius:6px;color:var(--fg);padding:6px 9px;outline:none}
+#side input[type=search]:focus{border-color:var(--acc)}
+#tree{overflow:auto;padding:6px 4px;flex:1}
+.tnode{display:flex;align-items:center;gap:6px;padding:3px 8px;border-radius:5px;
+  cursor:pointer;white-space:nowrap;user-select:none}
+.tnode:hover{background:var(--bg3)}
+.tnode.active{background:rgba(79,156,249,.18);color:#fff}
+.tnode .ico{width:16px;text-align:center;flex:none;color:var(--dim)}
+.tnode .nm{overflow:hidden;text-overflow:ellipsis}
+.tnode .sz{color:var(--dim);font-size:11px;margin-left:auto}
+.tnode .badge{font-size:10px;padding:0 5px;border-radius:8px;margin-left:4px}
+.b-new{background:rgba(63,185,111,.2);color:var(--ok)}
+.b-upd{background:rgba(226,163,54,.2);color:var(--warn)}
+.tkids{margin-left:14px;border-left:1px solid var(--line);padding-left:2px}
+.tkids.hidden{display:none}
+#content{display:flex;flex-direction:column;min-width:0;min-height:0}
+#infoBar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;
+  border-bottom:1px solid var(--line);background:var(--bg2)}
+#infoBar .path{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--acc);
+  word-break:break-all}
+#infoBar .meta{color:var(--dim);font-size:12px}
+#chips{display:flex;gap:6px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid var(--line);
+  max-height:110px;overflow:auto}
+.chip{background:var(--bg3);border:1px solid var(--line);border-radius:12px;padding:2px 10px;
+  font-size:11px;cursor:pointer;white-space:nowrap}
+.chip:hover{border-color:var(--acc)}
+.chip b{color:var(--fg);font-weight:600}
+.chip i{color:var(--dim);font-style:normal;margin-left:4px}
+#toolbar{display:flex;gap:8px;align-items:center;padding:9px 14px;flex-wrap:wrap}
+#toolbar input[type=text]{flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--line);
+  border-radius:6px;color:var(--fg);padding:7px 10px;outline:none;
+  font-family:ui-monospace,Menlo,monospace;font-size:12px}
+#toolbar input[type=text]:focus{border-color:var(--acc)}
+.btn{background:var(--bg3);border:1px solid var(--line);border-radius:6px;color:var(--fg);
+  padding:6px 13px;cursor:pointer;font-size:12px}
+.btn:hover{border-color:var(--acc)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#0b1220;font-weight:600}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.on{border-color:var(--acc2);color:var(--acc2)}
+label.ck{display:flex;gap:5px;align-items:center;color:var(--dim);font-size:12px;cursor:pointer}
+#sqlWrap{display:none;padding:0 14px 9px;flex-direction:column;gap:6px}
+#sqlWrap textarea{width:100%;height:96px;background:var(--bg3);border:1px solid var(--line);
+  border-radius:6px;color:var(--fg);padding:8px 10px;outline:none;resize:vertical;
+  font-family:ui-monospace,Menlo,monospace;font-size:12px}
+#gridWrap{flex:1;overflow:auto;min-height:0;position:relative}
+table{border-collapse:collapse;width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+thead th{position:sticky;top:0;background:var(--bg3);border-bottom:1px solid var(--line);
+  padding:7px 10px;text-align:left;cursor:pointer;white-space:nowrap;z-index:2}
+thead th .dir{color:var(--acc);margin-left:4px}
+tbody td{border-bottom:1px solid rgba(42,50,66,.5);padding:5px 10px;max-width:420px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top}
+tbody tr:hover td{background:rgba(79,156,249,.06)}
+td.null{color:var(--dim);font-style:italic}
+td.num{text-align:right}
+td:hover{cursor:zoom-in}
+#pager{display:flex;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--line);
+  background:var(--bg2);font-size:12px;color:var(--dim)}
+#pager select{background:var(--bg3);border:1px solid var(--line);border-radius:5px;color:var(--fg);padding:3px}
+#overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(15,17,21,.6);z-index:5;font-size:13px;color:var(--dim)}
+#empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:var(--dim);flex-direction:column;gap:8px;text-align:center;padding:20px}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:50}
+#modal .box{position:absolute;inset:6% 10%;background:var(--bg2);border:1px solid var(--line);
+  border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
+#modal .hd{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+#modal .hd .t{color:var(--dim);font-family:ui-monospace,Menlo,monospace;font-size:12px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#modal .bd{flex:1;overflow:auto;padding:14px;white-space:pre-wrap;word-break:break-all;
+  font-family:ui-monospace,Menlo,monospace;font-size:12px}
+#modal .x{margin-left:auto}
+#toasts{position:fixed;right:16px;bottom:16px;z-index:99;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--bg3);border:1px solid var(--line);border-left:3px solid var(--acc);
+  border-radius:8px;padding:9px 14px;font-size:12px;max-width:420px;box-shadow:0 4px 16px rgba(0,0,0,.4)}
+.toast.err{border-left-color:var(--bad);color:#f0b9b9}
+.toast.ok{border-left-color:var(--ok)}
+#drawer{position:fixed;top:0;right:-360px;width:350px;height:100%;background:var(--bg2);
+  border-left:1px solid var(--line);z-index:40;transition:right .18s;padding:16px;overflow:auto}
+#drawer.open{right:0}
+#drawer h3{font-size:13px;margin-bottom:4px;word-break:break-all}
+#drawer .tp{color:var(--dim);font-size:12px;margin-bottom:12px}
+#drawer table td,#drawer table th{padding:4px 8px;border-bottom:1px solid var(--line)}
+kbd{background:var(--bg3);border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="logo">🗂️ Parquet <span>Viewer</span></div>
+    <div class="root" id="rootPath"></div>
+    <div id="status"></div>
+  </header>
+  <div id="main">
+    <aside id="side">
+      <div class="tools"><input type="search" id="filter" placeholder="筛选文件…"></div>
+      <div id="tree"></div>
+    </aside>
+    <section id="content">
+      <div id="infoBar">
+        <div class="path" id="curPath">← 从左侧选择一个 parquet 文件或目录</div>
+        <div class="meta" id="curMeta"></div>
+      </div>
+      <div id="chips"></div>
+      <div id="toolbar">
+        <input type="text" id="where" placeholder='过滤条件(可空), 例: message IS NOT NULL AND len(messages) > 2  →  回车查询'>
+        <label class="ck"><input type="checkbox" id="sample">随机抽样</label>
+        <button class="btn primary" id="runBtn">查询</button>
+        <button class="btn" id="sqlBtn" title="自定义 SQL (Ctrl+Enter 运行)">SQL 模式</button>
+      </div>
+      <div id="sqlWrap">
+        <textarea id="sql" spellcheck="false">SELECT * FROM data LIMIT 200</textarea>
+      </div>
+      <div id="gridWrap">
+        <div id="empty">从左侧点击文件开始浏览<br>点击目录可合并查看该目录下所有 parquet 分片</div>
+        <div id="overlay">查询中…</div>
+        <table id="grid" style="display:none"><thead></thead><tbody></tbody></table>
+      </div>
+      <div id="pager" style="display:none">
+        <button class="btn" id="prev">‹ 上一页</button>
+        <span id="pageInfo"></span>
+        <button class="btn" id="next">下一页 ›</button>
+        <span style="flex:1"></span>
+        <span>每页</span>
+        <select id="pageSize">
+          <option>20</option><option selected>100</option><option>200</option><option>500</option><option>1000</option>
+        </select>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div id="modal">
+  <div class="box">
+    <div class="hd"><div class="t" id="modalTitle"></div>
+      <button class="btn x" id="modalClose">关闭 Esc</button></div>
+    <div class="bd" id="modalBody"></div>
+  </div>
+</div>
+<div id="drawer"></div>
+<div id="toasts"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const state={path:null,info:null,page:1,orderBy:"",orderDir:"asc",sqlMode:false,
+  knownFiles:new Set(),activeEl:null};
+const grid=$("#grid"),gridHead=grid.querySelector("thead"),gridBody=grid.querySelector("tbody");
+
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;
+  if(text!==undefined)e.textContent=text;return e}
+function fmtSize(b){if(b==null)return"";const u=["B","KB","MB","GB"];
+  let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++}
+  return b.toFixed(i?1:0)+u[i]}
+function fmtTime(t){if(!t)return"";const d=new Date(t*1000);
+  return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`}
+function fmtNum(n){return n==null?"":Number(n).toLocaleString()}
+function toast(msg,kind){const t=el("div","toast "+(kind||""),msg);$("#toasts").appendChild(t);
+  setTimeout(()=>{t.style.opacity="0";t.style.transition="opacity .4s";
+    setTimeout(()=>t.remove(),400)},kind==="err"?6000:3000)}
+function esc(s){return s==null?"":String(s)}
+function cellDisp(v){if(v===null||v===undefined)return{v:"NULL",cls:"null"};
+  if(typeof v==="number")return{v:fmtNum(v),cls:"num"};
+  if(typeof v==="boolean")return{v:String(v),cls:""};
+  const s=String(v);return{v:s.length>200?s.slice(0,200)+"…":s,cls:""}}
+
+async function api(url,opt){const r=await fetch(url,opt);
+  if(!r.ok){let m;try{m=(await r.json()).detail}catch(e){m=r.statusText}
+    throw new Error(typeof m==="string"?m:JSON.stringify(m))}
+  return r.json()}
+
+/* ---------- 文件树 ---------- */
+async function loadTree(first){
+  let d;try{d=await api("/api/scan")}catch(e){$("#status").textContent="扫描失败: "+e.message;return}
+  $("#rootPath").textContent=d.root;
+  const newFiles=[],updFiles=[];
+  for(const [rel,m] of Object.entries(flatten(d.tree))){
+    if(first){state.knownFiles.add(rel+"|"+m.mtime)}
+    else if(![...state.knownFiles].some(k=>k.startsWith(rel+"|"))){newFiles.push(rel)}
+    else if(!state.knownFiles.has(rel+"|"+m.mtime)){updFiles.push(rel)}
+  }
+  for(const rel of newFiles){const m=flatten(d.tree)[rel];state.knownFiles.add(rel+"|"+m.mtime)}
+  for(const rel of updFiles){const m=flatten(d.tree)[rel];
+    state.knownFiles.delete([...state.knownFiles].find(k=>k.startsWith(rel+"|")));
+    state.knownFiles.add(rel+"|"+m.mtime)}
+  if(newFiles.length)toast(`🟢 发现 ${newFiles.length} 个新文件`, "ok");
+  if(updFiles.length)toast(`🟠 ${updFiles.length} 个文件有更新`);
+  renderTree(d.tree,first);
+}
+function flatten(tree){const out={};
+  (function walk(node,prefix){for(const [k,v] of Object.entries(node)){
+    if(v&&v.size!==undefined)out[prefix+k]=v;
+    else walk(v,prefix+k+"/")}})(tree,"");return out}
+function renderTree(tree,first){
+  const kw=$("#filter").value.trim().toLowerCase();
+  const box=$("#tree");box.innerHTML="";
+  const build=(node,prefix,depth)=>{
+    const entries=Object.entries(node).sort((a,b)=>{
+      const af=a[1].size!==undefined,bf=b[1].size!==undefined;
+      return af===bf?a[0].localeCompare(b[0]):af?1:-1});
+    for(const [name,meta] of entries){
+      const rel=prefix+name;
+      if(kw&&!rel.toLowerCase().includes(kw)&&meta.size===undefined){
+        // 目录名不匹配但子项可能匹配, 不跳过
+        if(!JSON.stringify(meta).toLowerCase().includes(kw)){}
+      }
+      const row=el("div","tnode");
+      row.style.paddingLeft=(8+depth*12)+"px";
+      if(meta.size!==undefined){ // 文件
+        if(kw&&!rel.toLowerCase().includes(kw))continue;
+        row.appendChild(el("span","ico","📄"));
+        row.appendChild(el("span","nm",name));
+        row.appendChild(el("span","sz",fmtSize(meta.size)));
+        if(!first){
+          if([...state.knownFiles].some(k=>k.startsWith(rel+"|"))&&!state.knownFiles.has(rel+"|"+meta.mtime))
+            row.appendChild(el("span","badge b-upd","UPD"));
+        }
+        row.onclick=()=>openPath(rel,row);
+      }else{ // 目录
+        row.appendChild(el("span","ico","📁"));
+        row.appendChild(el("span","nm",name));
+        const kids=el("div","tkids");
+        kids.style.display=kw?"":"none";
+        row.onclick=()=>{kids.classList.toggle("hidden");
+          kids.style.display=kids.style.display==="none"?"":"none";
+          openPath(rel+"/",row)};
+        box.appendChild(row);build(meta,rel+"/",depth+1);
+        box.appendChild(kids);
+        continue}
+      box.appendChild(row);
+    }};
+  build(tree,"",0);
+}
+
+/* ---------- 打开 / 查询 ---------- */
+async function openPath(rel,rowEl){
+  state.path=rel;state.page=1;state.orderBy="";state.orderDir="asc";
+  if(state.activeEl)state.activeEl.classList.remove("active");
+  state.activeEl=rowEl;rowEl.classList.add("active");
+  $("#curPath").textContent=rel;$("#curMeta").textContent="读取中…";
+  try{
+    const info=await api("/api/open?path="+encodeURIComponent(rel));
+    state.info=info;
+    $("#curMeta").textContent=
+      `${info.is_dir?"目录(合并所有分片)":"文件"} · ${fmtNum(info.total)} 行 · ${info.columns.length} 列`;
+    const chips=$("#chips");chips.innerHTML="";
+    info.columns.forEach(c=>{
+      const chip=el("span","chip");
+      chip.appendChild(el("b",null,c.name));
+      chip.appendChild(el("i",null,c.type));
+      chip.onclick=()=>profile(c.name);
+      chips.appendChild(chip)});
+    $("#empty").style.display="none";
+    runQuery();
+  }catch(e){$("#curMeta").textContent="";toast("打开失败: "+e.message,"err")}
+}
+async function runQuery(){
+  if(!state.path)return;
+  $("#overlay").style.display="flex";
+  const req={path:state.path,where:$("#where").value,order_by:state.orderBy,
+    order_dir:state.orderDir,page:state.page,page_size:+$("#pageSize").value,
+    sample:$("#sample").checked};
+  try{
+    const d=await api("/api/query",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(req)});
+    renderGrid(d.columns,d.rows);
+    const pages=Math.max(1,Math.ceil(d.total/d.page_size));
+    $("#pager").style.display="flex";
+    $("#pageInfo").textContent=
+      `第 ${d.page}/${pages} 页 · 共 ${fmtNum(d.total)} 行${$("#sample").checked?" · 抽样":""}`;
+    state.lastTotal=d.total;state.lastPages=pages;
+  }catch(e){toast(e.message,"err")}
+  $("#overlay").style.display="none";
+}
+async function runSql(){
+  if(!state.path){toast("请先在左侧选择文件","err");return}
+  $("#overlay").style.display="flex";
+  try{
+    const d=await api("/api/sql",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({path:state.path,sql:$("#sql").value})});
+    renderGrid(d.columns,d.rows);
+    $("#pager").style.display="none";
+    if(d.truncated)toast(`结果超过 5000 行, 仅显示前 5000 行`);
+  }catch(e){toast(e.message,"err")}
+  $("#overlay").style.display="none";
+}
+function renderGrid(cols,rows){
+  grid.style.display="";gridHead.innerHTML="";gridBody.innerHTML="";
+  const hr=el("tr");
+  cols.forEach(c=>{
+    const th=el("th",null,c);
+    th.onclick=()=>{
+      if(state.orderBy===c)state.orderDir=state.orderDir==="asc"?"desc":"asc";
+      else{state.orderBy=c;state.orderDir="asc"}
+      state.page=1;runQuery()};
+    if(state.orderBy===c)th.appendChild(el("span","dir",state.orderDir==="asc"?"▲":"▼"));
+    hr.appendChild(th)});
+  gridHead.appendChild(hr);
+  rows.forEach(r=>{
+    const tr=el("tr");
+    r.forEach((v,i)=>{
+      const td=el("td");const disp=cellDisp(v);td.className=disp.cls;
+      td.textContent=disp.v;
+      td.title=String(disp.v).length>=200?"点击查看完整内容":"";
+      td.onclick=()=>showCell(cols[i],v);
+      tr.appendChild(td)});
+    gridBody.appendChild(tr)});
+  $("#gridWrap").scrollTop=0;
+}
+function showCell(col,v){
+  $("#modalTitle").textContent=col;
+  const b=$("#modalBody");
+  if(v===null)b.textContent="NULL";
+  else if(typeof v==="object")b.textContent=JSON.stringify(v,null,2);
+  else b.textContent=String(v);
+  $("#modal").style.display="block";
+}
+async function profile(col){
+  const dr=$("#drawer");dr.className="open";
+  dr.innerHTML="<h3>"+esc(col)+"</h3><div class='tp'>统计中…</div>";
+  try{
+    const d=await api(`/api/profile?path=${encodeURIComponent(state.path)}&column=${encodeURIComponent(col)}`);
+    let html=`<h3>${esc(d.column)}</h3><div class="tp">${esc(d.type)}</div><table>`;
+    for(const [k,v] of Object.entries(d.stats))
+      html+=`<tr><th>${k}</th><td>${v===null?"NULL":esc(fmtNumIfNum(v))}</td></tr>`;
+    dr.innerHTML=html+"</table>";
+  }catch(e){dr.innerHTML=`<h3>${esc(col)}</h3><div class="tp">${esc(e.message)}</div>`}
+}
+function fmtNumIfNum(v){return typeof v==="number"?fmtNum(v):v}
+
+/* ---------- 事件 ---------- */
+$("#runBtn").onclick=()=>{state.page=1;state.sqlMode?runSql():runQuery()};
+$("#where").onkeydown=e=>{if(e.key==="Enter"){state.page=1;runQuery()}};
+$("#prev").onclick=()=>{if(state.page>1){state.page--;runQuery()}};
+$("#next").onclick=()=>{if(state.page<state.lastPages){state.page++;runQuery()}};
+$("#pageSize").onchange=()=>{state.page=1;runQuery()};
+$("#sample").onchange=()=>{state.page=1;runQuery()};
+$("#sqlBtn").onclick=()=>{
+  state.sqlMode=!state.sqlMode;
+  $("#sqlBtn").classList.toggle("on",state.sqlMode);
+  $("#sqlWrap").style.display=state.sqlMode?"flex":"none";
+  $("#toolbar input").disabled=state.sqlMode;
+  $("#sample").disabled=state.sqlMode};
+$("#sql").onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key==="Enter")runSql()};
+$("#modalClose").onclick=()=>$("#modal").style.display="none";
+$("#modal").onclick=e=>{if(e.target.id==="modal")$("#modal").style.display="none"};
+document.addEventListener("keydown",e=>{if(e.key==="Escape")$("#modal").style.display="none"});
+$("#filter").oninput=()=>loadTree(true);
+$("#status").textContent="";
+
+loadTree(true);
+setInterval(()=>loadTree(false),10000); // 每 10 秒自动扫描新文件
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+ "amc-cot": {
+  "test_path": "datasets/amc23/test.jsonl",
+  "language": "en",
+  "tasks": [
+   "cot"
+  ],
+  "process_fn": "process_amc",
+  "answer_extraction_fn": "extract_gsm_few_shot_cot_answer",
+  "eval_fn": "eval_last_single_answer",
+  "few_shot_prompt": "CoTAMCPrompt"
+ },
+ "math500-cot": {
+  "test_path": "datasets/math500/test.jsonl",
+  "language": "en",
+  "tasks": [
+   "cot"
+  ],
+  "process_fn": "process_math500",
+  "answer_extraction_fn": "extract_math_few_shot_cot_answer",
+  "eval_fn": "eval_math",
+  "few_shot_prompt": "MinervaMathPrompt"
+ }
+}

@@ -30,7 +30,7 @@ def markup_question(args, item, language, src, task):
             pass
     return item
 
-def do_parallel_sampling(args, task, answer_extraction_fn, eval_fn, input_dir, output_dir, log_dir):
+def do_parallel_sampling(args, task, answer_extraction_fn, eval_fn, input_dir, output_dir, log_dir, system_prompt=None):
     if task == 'pal':
         code_fname = "run_pal_eval"
     elif task == 'cot':
@@ -44,7 +44,15 @@ def do_parallel_sampling(args, task, answer_extraction_fn, eval_fn, input_dir, o
 
     n_procs = args.ngpus // args.ngpus_per_model
 
-    gpus = [str(i) for i in range(args.ngpus)]
+    # Map worker ids onto the GPUs that are actually visible to this process:
+    # a pre-set CUDA_VISIBLE_DEVICES (e.g. "3,5") restricts the pool, and the
+    # per-worker --gpus value is passed through to os.environ['CUDA_VISIBLE_DEVICES']
+    # inside run_cot_eval.py.
+    _visible = os.environ.get('CUDA_VISIBLE_DEVICES', '').strip()
+    _pool = [v.strip() for v in _visible.split(',') if v.strip()] or [str(i) for i in range(args.ngpus)]
+    if len(_pool) < args.ngpus:
+        raise RuntimeError(f"--ngpus {args.ngpus} exceeds visible GPUs ({len(_pool)}): CUDA_VISIBLE_DEVICES={_visible!r}")
+    gpus = _pool[:args.ngpus]
     gpu_groups = []
     for i in range(n_procs):
         gpu_groups.append(gpus[i * args.ngpus_per_model: (i + 1) * args.ngpus_per_model])
@@ -56,31 +64,41 @@ def do_parallel_sampling(args, task, answer_extraction_fn, eval_fn, input_dir, o
         global_pid = n_procs * (args.rank or _worker_id) + pid
         logpath = os.path.join(log_dir, f"{global_pid}.log")
         f = open(logpath, "w")
-        cmd = f"python infer/{code_fname}.py " \
-            f"--data_dir {input_dir} " \
-            f"--max_num_examples 100000000000000 " \
-            f"--save_dir {output_dir} " \
-            f"--model {args.model_path} " \
-            f"--tokenizer {args.tokenizer_path or args.model_path} " \
-            f"--eval_batch_size 1 " \
-            f"--temperature {args.temperature} " \
-            f"--repeat_id_start 0 " \
-            f"--n_repeat_sampling {args.n_repeats} " \
-            f"--n_subsets {global_n_procs} " \
-            f"--prompt_format {args.prompt_format} " \
-            f"--few_shot_prompt {args.few_shot_prompt} " \
-            f"--answer_extraction_fn {answer_extraction_fn} " \
-            f"--eval_fn {eval_fn} " \
-            f"--subset_id {global_pid} " \
-            f"--gpus {','.join(gpus)} "
+        # NOTE: build the command as a list (not a string that is .split()):
+        # zero-shot system prompts contain spaces/newlines and would otherwise
+        # be broken into multiple argv tokens.
+        cmd = [
+            "python", f"infer/{code_fname}.py",
+            "--data_dir", input_dir,
+            "--max_num_examples", "100000000000000",
+            "--save_dir", output_dir,
+            "--model", args.model_path,
+            "--tokenizer", args.tokenizer_path or args.model_path,
+            "--eval_batch_size", "1",
+            "--temperature", str(args.temperature),
+            "--repeat_id_start", "0",
+            "--n_repeat_sampling", str(args.n_repeats),
+            "--n_subsets", str(global_n_procs),
+            "--prompt_format", args.prompt_format,
+            "--few_shot_prompt", args.few_shot_prompt,
+            "--answer_extraction_fn", answer_extraction_fn,
+            "--eval_fn", eval_fn,
+            "--subset_id", str(global_pid),
+            "--gpus", ','.join(gpus),
+        ]
         if args.use_vllm:
-            cmd += " --use_vllm "
+            cmd.append("--use_vllm")
         if args.load_in_half:
-            cmd += " --load_in_half "
+            cmd.append("--load_in_half")
+        if system_prompt:
+            cmd.extend(["--system_prompt", system_prompt])
+        bad = [(i, c) for i, c in enumerate(cmd) if not isinstance(c, (str, bytes, os.PathLike))]
+        if bad:
+            raise ValueError(f"worker cmd contains non-str elements at {bad}\ncmd={cmd}")
         local_metric_path = os.path.join(output_dir, f"metrics.{global_pid}.json")
         if not args.overwrite and os.path.exists(local_metric_path) and read_data(local_metric_path)['n_samples'] > 0:
             continue
-        procs.append((global_pid, subprocess.Popen(cmd.split(), stdout=f, stderr=f), f))
+        procs.append((global_pid, subprocess.Popen(cmd, stdout=f, stderr=f), f))
     for (global_pid, proc, f) in procs:
         print(f"Waiting for the {global_pid}th process to finish ...", flush=True)
         proc.wait()
@@ -123,7 +141,7 @@ def main():
     parser.add_argument("--output-dir", type=str, required=True, help="default to `model_path`_predictions")
     parser.add_argument("--model-path", type=str, required=True)
     parser.add_argument("--tokenizer-path", type=str, default=None)
-    parser.add_argument("--model-size", type=str, choices=['1b', '7b', '13b', '33b', '34b', '70b'], default="7b")
+    parser.add_argument("--model-size", type=str, choices=['1b', '3b', '7b', '8b', '13b', '33b', '34b', '70b'], default="7b")
 
     parser.add_argument("--test-conf", type=str, default="configs/zero_shot_test_configs.json", help="path to testing data config file that maps from a source to its info")
     parser.add_argument("--ngpus", type=int, default=8)
@@ -135,6 +153,9 @@ def main():
 
     parser.add_argument("--prompt_format", type=str, default="sft")
     parser.add_argument("--few_shot_prompt", type=str, default=None)
+    parser.add_argument("--system-prompt", type=str, default=None,
+                        help="optional system/wrapper prompt for zero-shot eval of RL-tuned models; "
+                             "a per-benchmark 'system_prompt' field in the test config takes precedence")
 
     parser.add_argument("--no-markup-question", action='store_true')
 
@@ -155,6 +176,8 @@ def main():
     test_conf = read_data(args.test_conf)
 
     for src, info in test_conf.items():
+        if not isinstance(info, dict):
+            continue  # skip metadata keys like "_comment"
         if args.n_repeats > 1:
             _src = f"{src}/sample_logs"
         else:
@@ -187,7 +210,8 @@ def main():
             log_dir = os.path.join(args.output_dir, _src, task, "logs")
             os.makedirs(output_dir, exist_ok=True)
             os.makedirs(log_dir, exist_ok=True)
-            metrics, agg_preds, result_msg = do_parallel_sampling(args, task, info['answer_extraction_fn'], info['eval_fn'], input_dir, output_dir, log_dir)
+            metrics, agg_preds, result_msg = do_parallel_sampling(args, task, info['answer_extraction_fn'], info['eval_fn'], input_dir, output_dir, log_dir,
+                                                                  system_prompt=info.get('custom_prompt', None) or info.get('system_prompt', None) or args.system_prompt)
 
             os.makedirs(os.path.dirname(metric_path), exist_ok=True)
             json.dump(metrics, open(metric_path, "w"), indent=4)

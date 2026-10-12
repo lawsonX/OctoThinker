@@ -175,3 +175,8 @@ cython_debug/
 
 # Mac OS
 .DS_Store
+eval/outputs/*
+models/*
+outputs/*
+rl/outputs/*
+midtraining/data/*
