@@ -20,7 +20,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EVAL_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${EVAL_DIR}/.." && pwd)"
 
-MODEL_PATH=${MODEL_PATH:-${REPO_ROOT}/models/Llama-3.2-3B-Base}
+# MODEL_PATH=${MODEL_PATH:-${REPO_ROOT}/models/Llama-3.2-3B-Base}
+MODEL_PATH=${MODEL_PATH:-${REPO_ROOT}/models/OctoThinker-3B-Long-Base}
+# MODEL_PATH=${MODEL_PATH:-${REPO_ROOT}/models/Qwen2.5-3B-Base}
 TOKENIZER_PATH=${TOKENIZER_PATH:-${MODEL_PATH}}
 MODEL_SIZE=${MODEL_SIZE:-3b}           # 1b | 3b | 7b | 8b (used for TP sizing; 3b/8b -> TP=1)
 # Respect a pre-set CUDA_VISIBLE_DEVICES when NGPUS is not given explicitly.
@@ -33,7 +35,7 @@ if [ -z "${NGPUS:-}" ]; then
 fi
 TEMPERATURE=${TEMPERATURE:-0}          # paper uses greedy decoding for eval
 N_REPEATS=${N_REPEATS:-1}
-TEST_CONF=${TEST_CONF:-configs/en_math_cot_few_shot_test_configs.json}
+TEST_CONF=${TEST_CONF:-configs/en_math_cot_few_shot_test_configs_partial.json}
 PROMPT_FORMAT=${PROMPT_FORMAT:-few_shot}
 
 MODEL_NAME=$(basename "${MODEL_PATH%/}")

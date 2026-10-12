@@ -77,9 +77,10 @@ python -c "import pyarrow.parquet as pq; print(pq.read_table('rl/data/math.8k/tr
 ## 四、数据准备
 
 - **RL 数据**：`rl/data/math.8k/` 就是 SimpleRL-Zoo 的 MATH8K（8407 条训练、272 条验证，其中最后 18 条是填充行）。如果要干净的验证指标，先跑一次 `python rl/scripts/clean_val_data.py`，会生成 254 条的 `test.clean.parquet`。
-- **中训练数据**：论文同款 8 个数据集正在上传到 `/hdd2/xiaolirui/octoThinker-Datasets/`（共 400GB+，注意确认上传完成后再跑预处理）。预处理管线（`midtraining/run/`）分两步：
+- **中训练数据**：论文同款 8 个数据集正在上传到 `/hdd2/xiaolirui/octoThinker-Datasets/`（共 400GB+，注意确认上传完成后再跑预处理）。预处理管线（`midtraining/run/`）分三步：
   1. `python midtraining/run/prepare_data.py --datasets-root /hdd2/xiaolirui/octoThinker-Datasets --output-root midtraining/data/jsonl` —— 把每个数据集转成统一的 `{"text": ...}` jsonl，并按论文第 3 节规则格式化（OpenR1 加 `<think></think>` 包裹、指令数据格式化为 `User:/Assistant:` 多轮、WildChat 只保留 GPT-4 对话）。脚本会自动探测 schema，某数据集没传完时会明确报错并继续处理其它数据集。
-  2. `bash midtraining/run/tokenize_data.sh` —— 调用 nanotron 的 `tools/preprocess_data.py` 用 Llama-3 分词器把 jsonl 切成 `.ds` 格式（加权混合直接在训练配置里指定目录和权重）。
+  2. `python midtraining/run/shard_data.py --n-shards 32` —— 把每个数据集的 `data.jsonl` 切成 32 份 `data.shard-*.jsonl` 并删除原文件。不可省略：datatrove 按文件分片，不切的话整个数据集只由一个 tokenize 任务处理，其余任务全部空转。
+  3. `bash midtraining/run/tokenize_data.sh --n-tasks 32` —— 调用 nanotron 的 `tools/preprocess_data.py` 用 Llama-3 分词器把 jsonl 切成 `.ds` 格式（加权混合直接在训练配置里指定目录和权重）。`--n-tasks` 不应超过切分份数；换任务数或重切后要先删掉 `tokenized/<Name>/` 和 `tokenized/logs/datatrove_<Name>/` 再跑，否则旧的完成标记会让部分分片被跳过。
 - **评测数据**：`eval/datasets/` 已齐备 13 个基准，包括 `math500/test.jsonl`（500 条）。
 
 ## 五、中训练启动命令
@@ -245,5 +246,5 @@ bash monitor/serve.sh
 - **RL batch 口径**：论文写 global batch 128 条提示、PPO mini-batch 64；仓库脚本沿用代码库默认的 256 / 16（脚本头部有注释说明对应关系）。想完全对齐论文可以改 `train_batch_size` 和 `ppo_mini_batch_size`。
 - **环境的少量冻结偏差**（搭建时记录，均不影响主链路）：verl 环境补装了 `torchdata==0.8.0`（vendored verl 的 StatefulDataLoader 需要，原 requirements 漏了；用 --no-deps 装以免它的 torch==2.4.0 精确pin覆盖我们的 +cu121 构建）；eval 环境的 `antlr4-python3-runtime` 用 4.13.2（与 RL 环境一致；原文件钉的 4.11.1 与 math-verify 0.5.2 依赖的 latex2sympy2_extended 1.0.6 冲突）；`pyairports` 降为 0.0.1（2.1.1 在任何镜像都不存在）；nanotron 环境的 datatrove 钉 0.3.0（nanotron 的 numpy<2 与 datatrove 新版 numpy>=2 冲突）；eval 的 vllm 用 0.6.3（原钉 0.6.3.post1 在镜像缺失，与 RL 统一为 0.6.3）。
 - **中训练配置丢失**：`midtraining/nanotron-runner/` 是空的，原始训练配置没有保留下来。`midtraining/run/configs/` 里的配置是按论文正文（第 3.1、4.1、4.2 节和表 2–5）重建的，所有配置键都逐个核对过本仓库 nanotron 快照的源码；但数据配比里的两个细节论文没有写明，只能合理假设：（1）第 3.4 节 89:10:1 混合中 1% 指令数据在三个指令数据集的子划分（默认三等分）；（2）decay 阶段缺失数据集的权重处理方式。这两点不影响第 3 节核心消融的复现。
-- **中训练数据**：8 个数据集上传完成后再跑 `prepare_data.py`；它会对每个数据集打印 schema 报告，格式对不上时会明确报错而不是悄悄跳过。
+- **中训练数据**：8 个数据集上传完成后再跑 `prepare_data.py`；它会对每个数据集打印 schema 报告，格式对不上时会明确报错而不是悄悄跳过。之后按顺序跑 `shard_data.py`（切分 jsonl）和 `tokenize_data.sh`（分词），两步缺一不可：datatrove 按文件分片，不切分则整个数据集只由一个 tokenize 任务处理。
 - **vLLM 显存占用**：RL 脚本里 `gpu_memory_utilization=0.75` 是为 40GB 卡调的（原脚本 0.8 是给 80GB 卡的），卡上还有别的服务时记得降低或换卡。

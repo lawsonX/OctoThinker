@@ -8,11 +8,18 @@ one UTF-8 jsonl per dataset with a single {"text": ...} column:
 
     <output-root>/<DatasetName>/data.jsonl
 
+That single jsonl is the canonical prepared artifact. Before tokenizing, run
+shard_data.py to replace it with data.shard-*.jsonl — datatrove shards work by
+file, so tokenizing one big jsonl would use a single task no matter how many
+workers are requested (see shard_data.py's docstring).
+
 Per-dataset behaviour (paper Section 3):
   * Web corpora (FineMath-4plus, MegaMath-Web-Pro, MegaMath-Web-Pro-Max):
     single text column; documents shorter than WEB_MIN_CHARS (50) are dropped.
   * MegaMath-QA: question + "\n" + answer; rows with a question shorter than
-    QA_MIN_QUESTION_CHARS (100) are dropped.
+    QA_MIN_QUESTION_CHARS (100) are dropped. The official MegaMath-QA upload
+    pre-renders each pair as "Question: ... Answer: ..." in a single text
+    column; that layout is recognised too and the text is kept as-is.
   * OpenR1-Math-220K: problem + "\n" + thinking wrapped in <think></think>
     (kept as-is if the field already carries the tags).
   * Instruction data (TULU3-sft persona-IF subset, UltraChat-220K, WildChat-1M):
@@ -35,6 +42,7 @@ Examples:
 
 import argparse
 import json
+import re
 import sys
 import time
 import traceback
@@ -150,6 +158,31 @@ def make_qa_formatter(q_col, a_col):
     return fmt
 
 
+# MegaMath-QA ships its pairs pre-rendered into a single text column:
+# "Question: ...\n\nAnswer: ..." (plus domain/url metadata columns).
+_QA_TEXT_ANSWER_MARKER = re.compile(r"^\s*Answer\s*:", re.M)
+
+
+def make_qa_text_formatter(text_col):
+    """Format a QA dataset stored as one 'Question: ... Answer: ...' text column.
+
+    The text is kept as-is; only the question-length filter is applied,
+    measured on the part before the 'Answer:' marker.
+    """
+
+    def fmt(row):
+        text = _clean(_as_text(row.get(text_col)))
+        if text is None:
+            return None
+        m = _QA_TEXT_ANSWER_MARKER.search(text)
+        question = text[: m.start()] if m else text
+        if len(question) < QA_MIN_QUESTION_CHARS:
+            return None
+        return text
+
+    return fmt
+
+
 def make_openr1_formatter(q_col, t_col):
     def fmt(row):
         q = _clean(_as_text(row.get(q_col)))
@@ -228,10 +261,10 @@ DATASETS = {
         "dirs": ["MegaMath-Web-Pro"],
         "kind": "web",
     },
-    "MegaMathWebProMax": {
-        "dirs": ["MegaMath-Web-Pro-Max", "MegaMath-Web-Pro-Max-100B"],
-        "kind": "web",
-    },
+    # "MegaMathWebProMax": {
+    #     "dirs": ["MegaMath-Web-Pro-Max", "MegaMath-Web-Pro-Max-100B"],
+    #     "kind": "web",
+    # },
     "MegaMathQA": {
         "dirs": ["MegaMath-QA", "MegaMath_QA"],
         "kind": "qa",
@@ -321,6 +354,10 @@ def sniff_formatter(kind, columns):
         a = _pick(colset, QA_ANSWER_COLS)
         if q and a:
             return make_qa_formatter(q, a), {"question": q, "answer": a}
+        # QA pairs pre-rendered into a single text column (e.g. MegaMath-QA)
+        col = _pick(colset, WEB_TEXT_COLS)
+        if col:
+            return make_qa_text_formatter(col), {"question_answer_text": col}
     elif kind == "openr1":
         q = _pick(colset, OPENR1_PROBLEM_COLS)
         t = _pick(colset, OPENR1_THINKING_COLS)

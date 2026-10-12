@@ -8,13 +8,20 @@
 #   *.ds.index      document bounds
 #   *.ds.metadata   token counts / tokenizer info
 #
+# IMPORTANT — shard first (shard_data.py). datatrove shards work BY FILE:
+# with N tasks, input file i goes to task (i % N). A single data.jsonl per
+# dataset would be processed by ONE task while the other N-1 exit instantly
+# with empty .ds files. Run `python shard_data.py --n-shards <N>` so each
+# dataset has ~N data.shard-*.jsonl files; keep --n-tasks <= shard count.
+#
 # Prerequisites:
 #   * env from midtraining/env_setup.sh (datatrove installed)
 #   * prepare_data.py already run (midtraining/data/jsonl/<Name>/data.jsonl)
+#   * shard_data.py already run (data.jsonl replaced by data.shard-*.jsonl)
 #   * a local Llama-3 tokenizer (models/Llama-3.2-3B-Base) — see models/download_models.sh
 #
 # Usage:
-#   bash tokenize_data.sh                         # all 8 datasets, 16 tasks
+#   bash tokenize_data.sh                         # all 8 datasets, 32 tasks
 #   bash tokenize_data.sh --datasets MegaMathQA,OpenR1Math220K
 #   bash tokenize_data.sh --n-tasks 32
 #   TOKENIZER=/path/to/tokenizer bash tokenize_data.sh
@@ -33,7 +40,7 @@ TOKENIZER="${TOKENIZER:-$REPO_ROOT/models/Llama-3.2-3B-Base}"
 EOS_TOKEN="${EOS_TOKEN:-}"
 LOG_DIR="$TOKENIZED_ROOT/logs"
 ENV_PREFIX="${ENV_PREFIX:-/hdd2/xiaolirui/conda_envs/nanotron}"
-N_TASKS=16
+N_TASKS=32
 DATASETS=""
 
 # ---------------------------------------------------------------------------
@@ -50,8 +57,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# canonical dataset names produced by prepare_data.py
-ALL_DATASETS="FineMath4Plus MegaMathWebPro MegaMathWebProMax MegaMathQA OpenR1Math220K TULU3SFT UltraChat220K WildChat1M"
+# canonical dataset names produced by prepare_data.py  #MegaMathWebProMax
+ALL_DATASETS="FineMath4Plus MegaMathWebPro MegaMathQA OpenR1Math220K TULU3SFT UltraChat220K WildChat1M"
 [ -n "$DATASETS" ] || DATASETS="$ALL_DATASETS"
 
 if [ -x "$ENV_PREFIX/bin/python" ]; then
@@ -97,6 +104,20 @@ for NAME in $(echo "$DATASETS" | tr ',' ' '); do
         echo "==> [skip] $NAME: no jsonl under $IN_DIR (run prepare_data.py for it first)" >&2
         FAILURES+=("$NAME")
         continue
+    fi
+    # datatrove shards by file: data.jsonl + data.shard-*.jsonl together would
+    # tokenize every document TWICE; refuse instead of silently duplicating.
+    if ls "$IN_DIR"/data.jsonl >/dev/null 2>&1 && ls "$IN_DIR"/data.shard-*.jsonl >/dev/null 2>&1; then
+        echo "==> [skip] $NAME: data.jsonl AND data.shard-*.jsonl both present under $IN_DIR" >&2
+        echo "           fix with: python shard_data.py --datasets $NAME" >&2
+        FAILURES+=("$NAME")
+        continue
+    fi
+    N_JSONL=$(ls "$IN_DIR"/*.jsonl 2>/dev/null | wc -l)
+    if [ "$N_JSONL" -lt "$N_TASKS" ]; then
+        echo "    WARNING: $NAME has only $N_JSONL jsonl file(s) < --n-tasks $N_TASKS;" >&2
+        echo "             at most $N_JSONL tokenize task(s) will do real work" >&2
+        echo "             (re-shard with more: python shard_data.py --datasets $NAME --n-shards $N_TASKS)" >&2
     fi
     echo "==> [tokenize] $NAME -> $OUT_DIR (log: $LOG_FILE)"
     mkdir -p "$OUT_DIR"

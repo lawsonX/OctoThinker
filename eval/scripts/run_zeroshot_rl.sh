@@ -32,7 +32,7 @@ if [ -z "${NGPUS:-}" ]; then
 fi
 TEMPERATURE=${TEMPERATURE:-0}          # paper uses greedy decoding for eval
 N_REPEATS=${N_REPEATS:-1}
-TEST_CONF=${TEST_CONF:-configs/en_math_zero_shot_test_configs.json}
+TEST_CONF=${TEST_CONF:-configs/en_math_zero_shot_test_configs_partial.json}
 # Optional override for the zero-shot template; when empty, each benchmark's
 # custom_prompt field in the config (the orz_base reproduction) is used.
 SYSTEM_PROMPT=${SYSTEM_PROMPT:-}

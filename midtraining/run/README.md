@@ -5,7 +5,7 @@ Reproduction assets for the mid-training recipes of the OctoThinker paper
 6x NVIDIA A100-PCIE-40GB and no Slurm**, using the pristine nanotron 0.4
 snapshot in `midtraining/nanotron/` (do not modify it).
 
-Pipeline: **env → jsonl → tokenize → convert base → train → export HF → rl/**.
+Pipeline: **env → jsonl → shard → tokenize → convert base → train → export HF → rl/**.
 
 All scripts are idempotent and cheap to re-run. Nothing here installs packages
 or downloads data/models by itself — the heavy steps are explicit commands you
@@ -19,12 +19,13 @@ run when ready.
 |---|---|
 | `../env_setup.sh` | create the conda env (`/hdd2/xiaolirui/conda_envs/nanotron`, python 3.10) with torch 2.4.0+cu121, flash-attn 2.7.0.post2 prebuilt wheel, nanotron editable (`[nanosets]`), `transformers==4.39.3` |
 | `prepare_data.py` | raw uploads → one `{"text": ...}` jsonl per dataset (schema-sniffing, paper Section-3 formatting) |
-| `tokenize_data.sh` | jsonl → nanotron `.ds` tokenized datasets (datatrove) |
+| `shard_data.py` | data.jsonl → `data.shard-*.jsonl` (machine-dependent shard count; datatrove shards by file — without this only one tokenize task works) |
+| `tokenize_data.sh` | sharded jsonl → nanotron `.ds` tokenized datasets (datatrove) |
 | `convert_hf_to_nanotron.sh` | HF base weights → nanotron format (`ExistingCheckpointInit`) |
 | `convert_nanotron_to_hf.sh` | nanotron checkpoint → HF format (for `rl/` or release) |
 | `run_midtraining.sh` | launcher: derives world size from config, sets NCCL env, `tee` logs, `RESUME=1` support |
 | `configs/` | verified training YAMLs (see table below) |
-| `../../midtraining/data/` | prepared jsonl + tokenized data (created by steps 2–3) |
+| `../../midtraining/data/` | prepared jsonl + tokenized data (created by steps 2–4) |
 | `../../outputs/midtraining/` | checkpoints, HF exports, logs (created by training) |
 
 Config files:
@@ -93,13 +94,37 @@ conversations only; web docs < 50 chars dropped; QA questions < 100 chars
 dropped. `prepare_data.py` sniffs columns from the actual files (multiple
 candidate names per dataset) rather than assuming one fixed schema.
 
-## 3. Tokenize
+## 3. Shard jsonl
 
 ```bash
-bash tokenize_data.sh                       # all available jsonl dirs, 16 workers
-bash tokenize_data.sh --datasets MegaMathQA --n-tasks 32
+python shard_data.py                       # every dataset dir, 32 shards
+python shard_data.py --n-shards 64         # e.g. to tokenize with --n-tasks 64 elsewhere
+python shard_data.py --datasets FineMath4Plus,MegaMathQA
+```
+
+Do not skip this step. datatrove hands input file `i` to task `i % n_tasks`, so
+tokenizing a single `data.jsonl` uses ONE worker while the other `--n-tasks-1`
+exit instantly with empty `.ds` files. `shard_data.py` splits each
+`<Name>/data.jsonl` into `<Name>/data.shard-000.jsonl ...` (contiguous,
+line-aligned, ≈equal bytes; `cat data.shard-*.jsonl` restores the original)
+and deletes `data.jsonl`. Re-running with a different `--n-shards` re-shards
+from the existing shards — pick the count for the machine that will run
+`tokenize_data.sh` (default 32 here; the count need not match its cores).
+
+## 4. Tokenize
+
+```bash
+bash tokenize_data.sh                       # all available jsonl dirs, 32 workers
+bash tokenize_data.sh --datasets MegaMathQA --n-tasks 16
 nohup bash tokenize_data.sh > tokenize.log 2>&1 &   # large datasets
 ```
+
+Keep `--n-tasks` at or below the shard count from step 3. If you change
+`--n-tasks` or re-shard an already tokenized dataset, delete
+`../../midtraining/data/tokenized/<Name>/` **and**
+`../../midtraining/data/tokenized/logs/datatrove_<Name>/` first: datatrove
+marks completed tasks per rank in that logging dir, and the rank→shard mapping
+changes with the task count, so stale markers would silently skip data.
 
 Output: `../../midtraining/data/tokenized/<Name>/` with `*.ds`, `*.ds.index`,
 `*.ds.metadata`, using tokenizer `models/Llama-3.2-3B-Base` (override with
@@ -107,7 +132,7 @@ Output: `../../midtraining/data/tokenized/<Name>/` with `*.ds`, `*.ds.index`,
 `EOS_TOKEN="</s>"` can be passed to append EOS after each document; nanotron's
 Nanoset concatenates documents, so the default is none.
 
-## 4. Convert the base model
+## 5. Convert the base model
 
 ```bash
 bash convert_hf_to_nanotron.sh \
@@ -120,12 +145,13 @@ these locations (`ExistingCheckpointInit` = weights only, no optimizer/LR
 state — see `src/nanotron/trainer.py`). Download bases first with
 `models/download_models.sh` if not present.
 
-## 5. Smoke test (do this first)
+## 6. Smoke test (do this first)
 
 ```bash
 # tiny tokenized dataset (2k docs is plenty for 20 steps)
 python prepare_data.py --datasets MegaMathWebPro --max-samples-per-dataset 2000 \
     --output-root ../../midtraining/data/smoke_jsonl
+JSONL_ROOT=../../midtraining/data/smoke_jsonl python shard_data.py --datasets MegaMathWebPro
 JSONL_ROOT=../../midtraining/data/smoke_jsonl bash tokenize_data.sh --datasets MegaMathWebPro
 mkdir -p ../../midtraining/data/tokenized && \
     mv ../../midtraining/data/tokenized/MegaMathWebPro ../../midtraining/data/tokenized/SmokeTiny
@@ -137,7 +163,7 @@ CONFIG=configs/smoke_3b_tiny.yaml bash run_midtraining.sh
 checkpoint to test the export on. Expected wall time: **20–40 min** including
 startup/compile.
 
-## 6. Train the 20B ablation (Section 3.1)
+## 7. Train the 20B ablation (Section 3.1)
 
 ```bash
 CONFIG=configs/ablation_3b_20B_cosine.yaml bash run_midtraining.sh
@@ -149,7 +175,7 @@ Section 3.3 ablations (web:QA 9:1 with different QA sources) and the Section
 3.4 89:10:1 mixture are pre-built as commented blocks inside
 `configs/ablation_3b_20B_cosine.yaml`.
 
-## 7. Export to HF and hand off to rl/
+## 8. Export to HF and hand off to rl/
 
 ```bash
 bash convert_nanotron_to_hf.sh \
@@ -226,3 +252,13 @@ then the 20B ablation; only commit to stage-1 after the recipe is validated.
   present; FineMath/MegaMath-web/Pro-Max/MegaMath-QA/TULU3 dirs still empty or
   partial. `prepare_data.py` will say exactly what is missing; just re-run it
   after the upload completes.
+- Tokenize parallelism is file-bound: datatrove gives input file `i` to task
+  `i % n_tasks`, so the shard count from `shard_data.py` — not the CPU count —
+  decides how many workers actually tokenize. This bit us once: a single
+  `data.jsonl` per dataset with `--n-tasks 16` put the whole dataset on one
+  core (the other 15 tasks "finished" instantly with empty `.ds` files, and
+  their completion markers made the run look healthy).
+- datatrove resume markers (`logs/datatrove_<Name>/completions/`) are keyed by
+  rank, and the rank→file mapping depends on the task count. Re-running with a
+  different `--n-tasks`, or after re-sharding, without deleting
+  `tokenized/<Name>/` + `logs/datatrove_<Name>/` first silently skips data.
