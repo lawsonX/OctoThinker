@@ -9,7 +9,7 @@
 #
 # Usage:
 #   CONFIG=configs/smoke_3b_tiny.yaml bash run_midtraining.sh
-#   CONFIG=configs/ablation_3b_20B_cosine.yaml bash run_midtraining.sh
+#   CUDA_VISIBLE_DEVICES=5 CONFIG=configs/ablation_3b_20B_cosine.yaml MONITOR=1 bash run_midtraining.sh
 #   RESUME=1 CONFIG=configs/ablation_3b_20B_cosine.yaml bash run_midtraining.sh
 #
 # Env vars:

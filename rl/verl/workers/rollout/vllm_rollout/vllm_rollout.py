@@ -112,6 +112,11 @@ class vLLMRollout(BaseRollout):
             disable_log_stats=config.disable_log_stats,
             max_num_batched_tokens=max_num_batched_tokens,
             enable_chunked_prefill=config.enable_chunked_prefill,
+            # Local patch: this node's 8GB swap is almost entirely used by
+            # other services, and vLLM's default 4GiB/engine preemption swap
+            # aborts the run when KV pressure hits. swap_space=0 forces
+            # recompute-mode preemption (no host swap usage).
+            swap_space=0,
         )
 
         # Offload vllm model to reduce peak memory usage

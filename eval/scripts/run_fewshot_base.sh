@@ -21,10 +21,12 @@ EVAL_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${EVAL_DIR}/.." && pwd)"
 
 # MODEL_PATH=${MODEL_PATH:-${REPO_ROOT}/models/Llama-3.2-3B-Base}
-MODEL_PATH=${MODEL_PATH:-${REPO_ROOT}/models/OctoThinker-3B-Long-Base}
+# MODEL_PATH=${MODEL_PATH:-${REPO_ROOT}/models/OctoThinker-3B-Long-Base}
 # MODEL_PATH=${MODEL_PATH:-${REPO_ROOT}/models/Qwen2.5-3B-Base}
+# MODEL_PATH=${MODEL_PATH:-${REPO_ROOT}/models/Llama-3.2-1B-Base}
+MODEL_PATH=${MODEL_PATH:-${REPO_ROOT}/models/Qwen2.5-1.5B-Base}
 TOKENIZER_PATH=${TOKENIZER_PATH:-${MODEL_PATH}}
-MODEL_SIZE=${MODEL_SIZE:-3b}           # 1b | 3b | 7b | 8b (used for TP sizing; 3b/8b -> TP=1)
+MODEL_SIZE=${MODEL_SIZE:-1b}           # 1b | 3b | 7b | 8b (used for TP sizing; 3b/8b -> TP=1)
 # Respect a pre-set CUDA_VISIBLE_DEVICES when NGPUS is not given explicitly.
 if [ -z "${NGPUS:-}" ]; then
     if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
